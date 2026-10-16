@@ -18,6 +18,7 @@
 static id<MTLDevice> dev;
 static id<MTLCommandBuffer> cmdbuf;
 static id<MTLRenderCommandEncoder> enc;
+static bool pass_has_depth, pass_has_stencil;
 static id<MTLRenderPipelineState> clear_pipes[64];
 static NSMutableDictionary<NSString *, id> *cache;
 // (stats) GPU wait time by cause: 0 = guest fence (nvnSyncWait), 1 = full flush (CPU reads GPU results / ring), 2 = sync all
@@ -448,6 +449,8 @@ static void begin_pass(void) {
     static int chunk = -1;
     if (chunk < 0) { const char *e = ENV("LARECOMP_CHUNK_PASSES"); chunk = e ? atoi(e) : 8; }
     if (chunk > 0 && cmdbuf && ++g_passes_in_cb >= chunk) renderer_submit();
+    pass_has_depth = rp.depthAttachment.texture != nil;
+    pass_has_stencil = rp.stencilAttachment.texture != nil;
     enc = [cb() renderCommandEncoderWithDescriptor:rp];
     vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
     stat_passes++;
@@ -527,6 +530,8 @@ static void attachment_formats(MTLRenderPipelineDescriptor *pd) {
 static void clear(int index, int kind, const void *color, uint32_t mask, bool depth, float dval, bool stencil,
                   uint32_t sval, uint32_t smask) {
     begin_pass();
+    depth = depth && pass_has_depth;
+    stencil = stencil && pass_has_stencil;
     if (g_debug_frame) {
         int pw, ph;
         pass_size(&pw, &ph);
@@ -1826,10 +1831,16 @@ static void draw(CmdRec *r, bool indexed) {
     static uint64_t last_dsk;
     static id<MTLDepthStencilState> last_dss;
     uint64_t dsk = hmix(hmix(hmix(0xcbf29ce484222325ull, st.ds, 8), st.stencil_mask, sizeof st.stencil_mask), st.stencil_vmask, sizeof st.stencil_vmask);
+    // NVN may leave tests enabled while drawing to a color-only target. Metal
+    // requires those tests to be disabled when their attachments are absent.
+    // Include attachment presence in both caches so switching render targets
+    // cannot reuse an incompatible state with identical guest test settings.
+    uint8_t attachments = (pass_has_depth ? 1 : 0) | (pass_has_stencil ? 2 : 0);
+    dsk = hmix(dsk, &attachments, sizeof attachments);
     id<MTLDepthStencilState> dss = dsk == last_dsk ? last_dss : nil;
     NSString *dk = nil;
     if (!dss) {
-        dk = [NSString stringWithFormat:@"ds %02x%02x%02x%02x%02x%02x%02x%02x %x %x %x %x", st.ds[0], st.ds[1], st.ds[2], st.ds[3],
+        dk = [NSString stringWithFormat:@"ds %u %02x%02x%02x%02x%02x%02x%02x%02x %x %x %x %x", attachments, st.ds[0], st.ds[1], st.ds[2], st.ds[3],
                     st.ds[4], st.ds[5], st.ds[6], st.ds[7], st.stencil_mask[0], st.stencil_vmask[0], st.stencil_mask[1], st.stencil_vmask[1]];
         dss = cache[dk];
     }
@@ -1837,9 +1848,9 @@ static void draw(CmdRec *r, bool indexed) {
         MTLDepthStencilDescriptor *dd = [MTLDepthStencilDescriptor new];
         static int nodt = -1;
         if (nodt < 0) nodt = getenv("LARECOMP_NO_DEPTH_TEST") != NULL;
-        if (st.ds[0] && !nodt) { dd.depthCompareFunction = compare_fn(st.ds[2]); dd.depthWriteEnabled = st.ds[1] != 0; }
+        if (pass_has_depth && st.ds[0] && !nodt) { dd.depthCompareFunction = compare_fn(st.ds[2]); dd.depthWriteEnabled = st.ds[1] != 0; }
         else { dd.depthCompareFunction = MTLCompareFunctionAlways; dd.depthWriteEnabled = NO; }
-        if (st.ds[3]) {
+        if (pass_has_stencil && st.ds[3]) {
             uint32_t ops = st.ds[5] | st.ds[6] << 8 | st.ds[7] << 16;
             for (int f = 0; f < 2; f++) {
                 MTLStencilDescriptor *sd = [MTLStencilDescriptor new];
