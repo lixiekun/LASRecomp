@@ -1214,6 +1214,19 @@ void ui_window_init(void) {
     SDL_GetWindowSizeInPixels(window, &width, &height);
     layer.drawableSize = CGSizeMake(width, height);
     UIWindow *uiwindow = (__bridge UIWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER, NULL);
+    UIWindowScene *scene = uiwindow.windowScene;
+    if (scene) {
+        // Set a 16:9 size together with uniform resizing: this also replaces any
+        // freeform geometry restored from an earlier version of the app.
+        UIWindowSceneGeometryPreferencesVision *geometry = [[UIWindowSceneGeometryPreferencesVision alloc] initWithSize:CGSizeMake(1280, 720)];
+        geometry.minimumSize = CGSizeMake(640, 360);
+        geometry.resizingRestrictions = UIWindowSceneResizingRestrictionsUniform;
+        [scene requestGeometryUpdateWithPreferences:geometry errorHandler:^(NSError *error) {
+            LOG("[vision-window] cannot lock window to 16:9: %s\n", error.localizedDescription.UTF8String);
+        }];
+    } else {
+        LOG("[vision-window] cannot lock window to 16:9 without a scene\n");
+    }
     LOG("[vision-window] scene=%s state=%ld hidden=%d layerAttached=%d drawable=%dx%d\n",
         uiwindow.windowScene ? "bound" : "missing", (long)uiwindow.windowScene.activationState,
         uiwindow.hidden, layer.superlayer != nil, width, height);
@@ -1260,5 +1273,17 @@ int ui_run(void) {
         int w, h;
         SDL_GetWindowSizeInPixels(window, &w, &h);
         layer.drawableSize = CGSizeMake(w, h);
+#ifdef LARECOMP_VISIONOS
+        static bool geometry_confirmed;
+        if (!geometry_confirmed) {
+            UIWindow *uiwindow = (__bridge UIWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER, NULL);
+            CGSize size = uiwindow.bounds.size;
+            if (uiwindow.windowScene.effectiveGeometry.resizingRestrictions == UIWindowSceneResizingRestrictionsUniform &&
+                size.height > 0 && fabs(size.width / size.height - 16.0 / 9.0) < 0.005) {
+                LOG("[vision-window] uniform 16:9 active, bounds %.1fx%.1f points; game render 1920x1080\n", size.width, size.height);
+                geometry_confirmed = true;
+            }
+        }
+#endif
     }
 }

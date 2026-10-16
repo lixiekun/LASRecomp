@@ -18,7 +18,7 @@ static const char *settings_file(void) {
 Settings g_settings = {
 #ifdef LARECOMP_VISIONOS
     .aspect = ASPECT_ORIGINAL,
-    .res_mode = RES_Q50,
+    .res_mode = 1,  // fixed 1920x1080, independent of window size
 #else
     .aspect = ASPECT_UNLOCKED,
 #endif
@@ -142,6 +142,13 @@ void settings_load(void) {
         else bind_settings_load(key, val);  // bind_pad_* / bind_key_*: runtime/hle/bindings.c
     }
     fclose(f);
+#ifdef LARECOMP_VISIONOS
+    // Migrate display-relative preferences saved by earlier visionOS builds.
+    g_settings.aspect = ASPECT_ORIGINAL;
+    g_settings.res_mode = 1;
+    g_settings.fullscreen = false;
+    g_settings.aspect_asked = true;
+#endif
     if (!tip_key) g_settings.menu_tip_seen = true;  // (a settings file from before the note: not a first launch)
     if (!aspect_key) g_settings.aspect_asked = true;  // (likewise: the aspect ratio was chosen already)
     if (g_settings.volume < 0) g_settings.volume = 0;

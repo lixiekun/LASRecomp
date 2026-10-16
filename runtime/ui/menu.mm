@@ -437,6 +437,9 @@ static void tab_display(void) {
     float scale = ImGui::GetFontSize() / 34;
     opt_begin("##video", scale);
     opt_section("Display");
+#ifdef LARECOMP_VISIONOS
+    ImGui::TextUnformatted("Aspect ratio: 16:9 (fixed)");
+#else
     const char *aspects[] = {"Unlocked", "Original 16:9"};
     opt_choice("Aspect ratio", &g_settings.aspect, aspects, 2, ASPECT_UNLOCKED,
                "Unlocked: the view fills the window, so wider (or taller) windows show more of the island - up to "
@@ -446,9 +449,14 @@ static void tab_display(void) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
+#endif
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
 
     opt_section("Rendering");
+#ifdef LARECOMP_VISIONOS
+    ImGui::TextUnformatted("Internal resolution: 1920 x 1080 (fixed)");
+    ImGui::TextWrapped("Enlarging the window scales the image while keeping the same game resolution.");
+#else
     // display order -> RES_* (the ini / enum order predates the menu order)
     // (up to 4x: 7680 x 4320, 8K - more only ran out of GPU memory, and sat next to 75% in the list)
     // (Match display in the middle: left from it 75% / 50% / 25%, right Dynamic then 1x-4x; user 2026-10-11)
@@ -470,6 +478,7 @@ static void tab_display(void) {
             snprintf(d + n, sizeof d - n, " Dynamic: %.0f%% of the display right now.", output_scale_dynamic_factor() * 100);
         if (opt_choice("Internal resolution", &ri, res, NRES, RES_MATCH_AT, d, false)) g_settings.res_mode = res_mode[ri];
     }
+#endif
 #ifndef LARECOMP_VISIONOS
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
 #ifdef __APPLE__

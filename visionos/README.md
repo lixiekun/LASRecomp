@@ -15,7 +15,11 @@ It is intended for local builds from the owner's game files. It is not an immers
 - CPU game code is generated on the development Mac and linked before signing. Runtime compiler subprocesses,
   randomizer generation and re-exec are unavailable in this target.
 - The Metal backend decodes BC textures on devices that do not support BC compression. MetalFX and the macOS-only
-  depth-format path are disabled. Initial defaults use the original aspect ratio and a lower internal resolution.
+  depth-format path are disabled.
+- The visionOS game image renders at a fixed 1920x1080 with original 16:9 framing. Window resizing only scales
+  that image; it does not increase the game's render resolution. Earlier display-relative preferences are
+  overridden, and the Video tab shows the fixed format. The native window requests uniform resizing from a
+  1280x720-point size to maintain 16:9, including when upgrading from a restored freeform window.
 - This is an initial bring-up, not a complete game compatibility or background/resume validation.
 
 ## Build prerequisites

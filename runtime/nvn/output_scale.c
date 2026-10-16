@@ -59,6 +59,16 @@ double output_scale_dynamic_factor(void) { return g_dyn; }
 
 void output_scale(double dw, double dh, bool reshape_allowed, double now, double gpu_ms, OutScale *o) {
     double fit = fmin(dw / 1920.0, dh / 1080.0);
+#ifdef LARECOMP_VISIONOS
+    // Window size controls presentation only. Keep the game's render targets
+    // at 1080p even with old display-relative settings or a restored wide window.
+    o->sx = o->sy = o->shape = 1.0;
+    o->vw = 1920.0 * fit;
+    o->vh = 1080.0 * fit;
+    o->vx = (dw - o->vw) / 2;
+    o->vy = (dh - o->vh) / 2;
+    return;
+#endif
     static double forced = -1, wide_test = -1;
     if (forced < 0) forced = getenv("LARECOMP_SCALE") ? atof(getenv("LARECOMP_SCALE")) : 0;
     if (wide_test < 0) wide_test = getenv("LARECOMP_WIDE_TEST") ? atof(getenv("LARECOMP_WIDE_TEST")) : 0;
