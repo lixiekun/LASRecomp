@@ -220,13 +220,28 @@ static KThread *thread_new(uint64_t entry, uint64_t arg, uint64_t stack_top, int
     return t;
 }
 
-static void thread_start(KThread *t) {
+static uint32_t thread_start(KThread *t) {
     pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 256ull << 20);  // guest recursion runs on the host stack
+    // Guest recursion runs on the host stack. The desktop's 256 MiB stacks
+    // exhaust visionOS thread resources before all of the game's workers start.
+#ifdef LARECOMP_VISIONOS
+    const size_t stack_size = 16ull << 20;
+#else
+    const size_t stack_size = 256ull << 20;
+#endif
+    int err = pthread_attr_init(&attr);
+    if (!err) {
+        err = pthread_attr_setstacksize(&attr, stack_size);
+        if (!err) err = pthread_create(&t->host, &attr, thread_main, t);
+        pthread_attr_destroy(&attr);
+    }
+    if (err) {
+        LOG("[kernel] StartThread %x failed (host stack %zu MiB): %s (%d)\n",
+            t->handle, stack_size >> 20, strerror(err), err);
+        return R_OUT_OF_RESOURCE;
+    }
     t->started = true;
-    pthread_create(&t->host, &attr, thread_main, t);
-    pthread_attr_destroy(&attr);
+    return R_OK;
 }
 
 KThread *kernel_create_main_thread(uint64_t entry, uint64_t stack_size, int prio) {
@@ -239,7 +254,8 @@ KThread *kernel_create_main_thread(uint64_t entry, uint64_t stack_size, int prio
 
 void kernel_run_main(KThread *t, uint64_t x0, uint64_t x1, uint64_t x2, uint64_t x3) {
     t->cpu.x[0] = x0; t->cpu.x[1] = x1; t->cpu.x[2] = x2; t->cpu.x[3] = x3;
-    thread_start(t);  // the host main thread goes on to run the window event loop
+    // The host main thread goes on to run the window event loop.
+    if (thread_start(t) != R_OK) FATAL("cannot start the game's main thread\n");
 }
 
 uint32_t kernel_current_thread_handle(void) { return t_cur ? t_cur->handle : 0; }
@@ -604,8 +620,7 @@ static void svc_impl(Cpu *c, uint32_t imm, uint64_t pc) {
     case 0x09: {  // StartThread
         KObject *o = handle_get((uint32_t)x[0]);
         if (!o || o->type != KOBJ_THREAD) { x[0] = R_INVALID_HANDLE; break; }
-        thread_start((KThread *)o);
-        x[0] = R_OK;
+        x[0] = thread_start((KThread *)o);
         break;
     }
     case 0x0A: longjmp(t_cur->unwind, 1);  // ExitThread: back to thread_main, which signals the thread object

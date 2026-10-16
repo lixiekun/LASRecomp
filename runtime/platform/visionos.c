@@ -6,10 +6,12 @@
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <mach/thread_status.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/ucontext.h>
 #include <unistd.h>
@@ -18,6 +20,50 @@
 
 static mach_timebase_info_data_t tb;
 
+// Opt-in snapshots from inside our own process. No debugger attachment or launch delay.
+static void *startup_diagnostics(void *opaque) {
+    char *path = opaque;
+    FILE *out = fopen(path, "w");
+    free(path);
+    if (!out) return NULL;
+    for (int round = 0; round < 3; round++) {
+        sleep(round ? 5 : 3);
+        fprintf(out, "\n=== startup snapshot %d ===\n", round + 1);
+        thread_act_array_t threads = NULL;
+        mach_msg_type_number_t count = 0;
+        if (task_threads(mach_task_self(), &threads, &count) != KERN_SUCCESS) break;
+        for (mach_msg_type_number_t i = 0; i < count; i++) {
+            arm_thread_state64_t state;
+            mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
+            if (thread_get_state(threads[i], ARM_THREAD_STATE64, (thread_state_t)&state, &n) == KERN_SUCCESS) {
+                char name[64] = {0};
+                pthread_t thread = pthread_from_mach_thread_np(threads[i]);
+                if (thread) pthread_getname_np(thread, name, sizeof name);
+                fprintf(out, "thread %u %s\n", i, name);
+                uint64_t pc = state.__pc, fp = state.__fp;
+                for (int frame = 0; frame < 12 && pc; frame++) {
+                    Dl_info info = {0};
+                    dladdr((void *)(uintptr_t)pc, &info);
+                    fprintf(out, "  %llx %s+%llx\n", (unsigned long long)pc,
+                            info.dli_sname ? info.dli_sname : "?",
+                            info.dli_saddr ? (unsigned long long)(pc - (uintptr_t)info.dli_saddr) : 0);
+                    uint64_t pair[2];
+                    vm_size_t got = 0;
+                    if (!fp || vm_read_overwrite(mach_task_self(), fp, sizeof pair, (vm_address_t)pair, &got) != KERN_SUCCESS || got != sizeof pair) break;
+                    pc = pair[1];
+                    if (pair[0] <= fp || pair[0] - fp > (256ull << 20)) break;
+                    fp = pair[0];
+                }
+            }
+            mach_port_deallocate(mach_task_self(), threads[i]);
+        }
+        vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(thread_t));
+        fflush(out);
+    }
+    fclose(out);
+    return NULL;
+}
+
 void plat_init(void) {
     char *path = SDL_GetPrefPath("local", "LASVision");
     if (path) {
@@ -25,6 +71,14 @@ void plat_init(void) {
         char log[2048];
         snprintf(log, sizeof log, "%s/lasvision.log", path);
         freopen(log, "a", stderr);
+        if (getenv("LARECOMP_STARTUP_DIAGNOSTICS")) {
+            char file[2048];
+            snprintf(file, sizeof file, "%s/startup-threads.log", path);
+            pthread_t thread;
+            char *copy = strdup(file);
+            if (pthread_create(&thread, NULL, startup_diagnostics, copy) == 0) pthread_detach(thread);
+            else free(copy);
+        }
         SDL_free(path);
     }
 }

@@ -8,6 +8,7 @@ schemes:
         LASVision: all
     run:
       config: Debug
+      debugEnabled: false
 settings:
   base:
     CLANG_ENABLE_OBJC_ARC: YES
@@ -95,11 +96,12 @@ targets:
     info:
       path: Info.plist
       properties:
+        UIApplicationSupportsIndirectInputEvents: true
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
           UISceneConfigurations:
             UIWindowSceneSessionRoleApplication:
-              - UISceneConfigurationName: Default
+              - UISceneConfigurationName: SDLSceneConfiguration
                 UISceneDelegateClassName: SDLUIKitSceneDelegate

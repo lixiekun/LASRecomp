@@ -7,10 +7,11 @@ It is intended for local builds from the owner's game files. It is not an immers
 
 - Tested with the visionOS 27 simulator on Apple Silicon: opening movie, title controls, save creation and loading,
   name entry, dialogue and character movement in Marin and Tarin's house.
-- The visionOS device target builds and its signature verifies. Physical-device startup, address-space limits,
-  memory pressure, performance and controller pairing remain unverified.
-- The simulator can reserve the existing 12.5 GiB guest virtual address window. This is a virtual reservation,
-  not an upfront allocation of that much physical memory; real hardware still needs validation.
+- Tested on an M2 Vision Pro running visionOS 27.0.1: native startup, first drawable acquisition and sustained
+  opening-movie rendering, with a captured device framebuffer. Longer gameplay, memory pressure and controller
+  interaction still need device testing.
+- Both the simulator and the tested Vision Pro can reserve the existing 12.5 GiB guest virtual address window.
+  This is a virtual reservation, not an upfront allocation of that much physical memory.
 - CPU game code is generated on the development Mac and linked before signing. Runtime compiler subprocesses,
   randomizer generation and re-exec are unavailable in this target.
 - The Metal backend decodes BC textures on devices that do not support BC compression. MetalFX and the macOS-only
@@ -58,6 +59,9 @@ team identifier in the ignored `visionos/Local.xcconfig`:
 DEVELOPMENT_TEAM = YOUR_TEAM_ID
 ```
 
+The Run action disables **Debug executable** to avoid debugger attachment at launch. Re-enable it manually
+in Edit Scheme only when you need an interactive debugging session.
+
 The shared `Signing.xcconfig` includes that file if present. Automatic signing is enabled. No account or team
 identifier is committed. The post-build phase stages the private RomFS image and the small set of ordinary files
 needed by movie playback and cosmetic patches, before Xcode signs the app. The first device install transfers
@@ -79,6 +83,10 @@ Keyboard defaults: Q+E for L+R, K to confirm, J to cancel, WASD to move, Return 
 Saves and settings stay in the app's writable container. The runtime log is under
 `Library/Application Support/local/LASVision/lasvision.log`. Startup failures before runtime initialization can
 also appear in the Xcode console. The host cannot re-exec to retry an address-space collision on visionOS.
+The visionOS target uses 16 MiB host thread stacks; thread creation errors are logged and returned to the guest.
+Set the Run environment variable `LARECOMP_STARTUP_DIAGNOSTICS=1` to save three native thread snapshots to
+`startup-threads.log` alongside the runtime log, without attaching a debugger. First-frame milestones and the
+UIKit scene/layer state are also recorded in the runtime log.
 
 BC decoder regression checks, including non-multiple-of-four image dimensions and signed BC5 components:
 

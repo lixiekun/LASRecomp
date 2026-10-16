@@ -30,13 +30,15 @@
 			<array>
 				<dict>
 					<key>UISceneConfigurationName</key>
-					<string>Default</string>
+					<string>SDLSceneConfiguration</string>
 					<key>UISceneDelegateClassName</key>
 					<string>SDLUIKitSceneDelegate</string>
 				</dict>
 			</array>
 		</dict>
 	</dict>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 </dict>

@@ -5,6 +5,9 @@
 // Metal renderer for the NVN layer: window, textures, command execution, presentation.
 #include <sys/stat.h>
 #import <Foundation/Foundation.h>
+#ifdef LARECOMP_VISIONOS
+#import <UIKit/UIKit.h>
+#endif
 #ifndef LARECOMP_VISIONOS
 #import <AppKit/AppKit.h>
 #endif
@@ -991,14 +994,24 @@ void backend_represent(void) {
 }
 
 void backend_present(NvnTexture *t) {
+#ifdef LARECOMP_VISIONOS
+    bool first = total_frames == 0;
+    if (first) LOG("[first-frame] present entered\n");
+#endif
     g_last_presented = t;
     extern void renderer_submit(void);
     renderer_submit();  // same queue: the present pass runs after the frame's work
+#ifdef LARECOMP_VISIONOS
+    if (first) LOG("[first-frame] guest commands submitted; requesting drawable %.0fx%.0f\n", layer.drawableSize.width, layer.drawableSize.height);
+#endif
     TexBackend *b = t->backend;
     if (b) b->presented = true;
     @autoreleasepool {
         uint64_t nd0 = SDL_GetTicksNS();
         id<CAMetalDrawable> drawable = [layer nextDrawable];
+#ifdef LARECOMP_VISIONOS
+        if (first) LOG("[first-frame] drawable %s\n", drawable ? "received" : "unavailable");
+#endif
         uint64_t nd = SDL_GetTicksNS() - nd0;
         if (nd > 30000000) {
             static int warned;
@@ -1196,6 +1209,15 @@ void ui_window_init(void) {
     layer.device = dev;
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     layer.framebufferOnly = getenv("LARECOMP_WINDOW_SHOT") ? NO : YES;
+#ifdef LARECOMP_VISIONOS
+    int width, height;
+    SDL_GetWindowSizeInPixels(window, &width, &height);
+    layer.drawableSize = CGSizeMake(width, height);
+    UIWindow *uiwindow = (__bridge UIWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER, NULL);
+    LOG("[vision-window] scene=%s state=%ld hidden=%d layerAttached=%d drawable=%dx%d\n",
+        uiwindow.windowScene ? "bound" : "missing", (long)uiwindow.windowScene.activationState,
+        uiwindow.hidden, layer.superlayer != nil, width, height);
+#endif
 }
 
 SDL_Window *ui_window(void) { return window; }
@@ -1217,12 +1239,23 @@ int ui_run(void) {
     for (;;) {
         if (rt_reboot_requested()) return rt_reboot_requested();  // (runtime/main.c tears the game down)
         SDL_Event e;
+#ifdef LARECOMP_VISIONOS
+        // A connected controller can deliver events continuously. Do not wait for
+        // a quiet 16 ms interval before updating the Metal layer and window state.
+        int count = 0;
+        if (SDL_WaitEventTimeout(&e, 16)) do {
+#else
         while (SDL_WaitEventTimeout(&e, 16)) {
+#endif
             if (e.type == SDL_EVENT_QUIT) { LOG("window closed\n"); exit(0); }
             if (input_user_blocked(&e)) continue;  // scripted test runs: the real keyboard / mouse / pads do nothing
             if (menu_handle_event(&e)) continue;
             input_handle_event(&e);
+#ifdef LARECOMP_VISIONOS
+        } while (++count < 64 && SDL_PollEvent(&e));
+#else
         }
+#endif
         menu_apply_window_requests(window);
         int w, h;
         SDL_GetWindowSizeInPixels(window, &w, &h);
