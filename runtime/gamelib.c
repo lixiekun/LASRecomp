@@ -16,6 +16,21 @@
 static const GameLibTables *g_tables;
 static char g_error[256];
 
+#ifdef LARECOMP_VISIONOS
+// The user's generated code is linked on the Mac, before the app is signed.
+extern const GameLibTables *lasgame_tables(void);
+bool gamelib_present(const char *game_dir) { (void)game_dir; return true; }
+bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
+    (void)game_dir;
+    g_tables = lasgame_tables();
+    if (g_tables && g_tables->abi == GAMELIB_ABI && !strcmp(g_tables->id, GAMELIB_ID)) return true;
+    if (why && why_size) snprintf(why, why_size, "Embedded game code does not match this build");
+    g_tables = NULL;
+    return false;
+}
+const GameLibTables *gamelib_tables(void) { return g_tables; }
+#else
+
 // The library's id file (<library>.id, written next to it by the build): its GAMELIB_ID, read without loading it.
 static bool id_matches(const char *lib) {
     char path[1100], id[128] = {0};
@@ -99,3 +114,4 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
 }
 
 const GameLibTables *gamelib_tables(void) { return g_tables; }
+#endif

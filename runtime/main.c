@@ -159,7 +159,11 @@ static void boot(const char *root) {
     kernel_run_main(t, t->handle, 0, init_fn, fini_fn);  // nn::init::Start(thread_handle, args_region, init, fini)
 }
 
+#ifdef LARECOMP_VISIONOS
+int las_game_main(int argc, char **argv) {
+#else
 int main(int argc, char **argv) {
+#endif
     plat_init();
 #ifdef _WIN32
     setvbuf(stderr, NULL, _IONBF, 0);  // the Windows CRT treats _IOLBF as full buffering

@@ -1,0 +1,3 @@
+// Keep developer-specific settings out of version control.
+// Set DEVELOPMENT_TEAM in Local.xcconfig, or select a team in Xcode.
+#include? "Local.xcconfig"

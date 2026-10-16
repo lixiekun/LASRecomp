@@ -4,9 +4,14 @@
 #include "ui/menu.h"
 // Metal renderer for the NVN layer: window, textures, command execution, presentation.
 #include <sys/stat.h>
+#import <Foundation/Foundation.h>
+#ifndef LARECOMP_VISIONOS
 #import <AppKit/AppKit.h>
+#endif
 #import <Metal/Metal.h>
+#ifndef LARECOMP_VISIONOS
 #import <MetalFX/MetalFX.h>
+#endif
 #include "output_scale.h"
 #import <QuartzCore/CAMetalLayer.h>
 #include <SDL3/SDL.h>
@@ -16,6 +21,7 @@
 #include "nvn.h"
 #include "renderer.h"
 #include "texpatch.h"
+#include "bc_decode.h"
 
 static id<MTLDevice> dev;
 static id<MTLCommandQueue> queue;
@@ -30,7 +36,19 @@ uint64_t g_guest_buffer_base;
 // ================================================================== formats
 typedef struct { MTLPixelFormat pf; uint8_t expand_rgb; uint8_t force_alpha_one; } MtlFormat;
 
+static bool bc_fallback(uint32_t f) {
+    return f >= 0x41 && f <= 0x50 && dev && !dev.supportsBCTextureCompression;
+}
 static MtlFormat mtl_format(uint32_t f) {
+    if (bc_fallback(f)) {
+        if (f == 0x49) return (MtlFormat){MTLPixelFormatR8Unorm};
+        if (f == 0x4A) return (MtlFormat){MTLPixelFormatR8Snorm};
+        if (f == 0x4B) return (MtlFormat){MTLPixelFormatRG8Unorm};
+        if (f == 0x4C) return (MtlFormat){getenv("LARECOMP_BC5_UNORM") ? MTLPixelFormatRG8Unorm : MTLPixelFormatRG8Snorm};
+        if (f >= 0x4F) return (MtlFormat){MTLPixelFormatRGBA16Float};
+        return (MtlFormat){f == 0x45 || f == 0x46 || f == 0x47 || f == 0x48 || f == 0x4E
+                           ? MTLPixelFormatRGBA8Unorm_sRGB : MTLPixelFormatRGBA8Unorm};
+    }
     switch (f) {
     case 0x01: return (MtlFormat){MTLPixelFormatR8Unorm};
     case 0x02: return (MtlFormat){MTLPixelFormatR8Snorm};
@@ -489,6 +507,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b, id<MTLBlitCommandEncode
             if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, lin, l.w, l.h, row);
             uint8_t *data = lin;
             uint32_t out_row = row;
+            uint32_t out_rows = l.hb;
             static int bc5log;  // LARECOMP_LOG_BC5: endpoint bytes of BC5 (0x4B/0x4C) textures (unorm ~128 vs snorm ~0)
             if ((t->format == 0x4B || t->format == 0x4C) && lv == 0 && bc5log < 12 && getenv("LARECOMP_LOG_BC5")) {
                 bc5log++;
@@ -496,6 +515,15 @@ static void upload_texture(NvnTexture *t, TexBackend *b, id<MTLBlitCommandEncode
                 for (uint64_t i = 0; i + 16 <= sz; i += 16) { hist[lin[i] >> 6]++; hist[lin[i + 8] >> 6]++; }
                 LOG("[bc5] fmt %#x %ux%u endpoint0 quartiles (0-63,64-127,128-191,192-255): %d %d %d %d\n", t->format, l.w, l.h,
                     hist[0], hist[1], hist[2], hist[3]);
+            }
+            if (bc_fallback(t->format)) {
+                size_t decoded_row;
+                uint32_t format = t->format == 0x4C && getenv("LARECOMP_BC5_UNORM") ? 0x4B : t->format;
+                if (!bc_decode_image(format, lin, l.w, l.h, l.d, &data, &decoded_row))
+                    FATAL("BC texture decode failed: fmt %#x %ux%u\n", t->format, l.w, l.h);
+                free(lin); lin = data;
+                out_row = (uint32_t)decoded_row;
+                out_rows = l.h;
             }
             if (mf.expand_rgb && fi->bpb == 3) {  // RGB8 -> RGBA8
                 uint64_t n = (uint64_t)l.wb * l.hb * l.d;
@@ -508,7 +536,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b, id<MTLBlitCommandEncode
                 free(lin);
                 lin = data;
             }
-            uint64_t out_sz = (uint64_t)out_row * l.hb * l.d;
+            uint64_t out_sz = (uint64_t)out_row * out_rows * l.d;
             id<MTLBuffer> staging = [dev newBufferWithBytes:data length:out_sz options:MTLResourceStorageModeShared];
             free(lin);
             // the copy stays inside the texture's level: one allocated at the internal resolution (16:9, render
@@ -518,7 +546,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b, id<MTLBlitCommandEncode
             MTLSize size = MTLSizeMake(MIN((NSUInteger)l.w, lw), MIN((NSUInteger)l.h, lh), MIN((NSUInteger)l.d, ld));
             NSUInteger slice = layer;
             [blit copyFromBuffer:staging sourceOffset:0 sourceBytesPerRow:out_row
-                 sourceBytesPerImage:(NSUInteger)out_row * l.hb sourceSize:size toTexture:b->tex
+                 sourceBytesPerImage:(NSUInteger)out_row * out_rows sourceSize:size toTexture:b->tex
                     destinationSlice:slice destinationLevel:lv destinationOrigin:MTLOriginMake(0, 0, 0)];
         }
     }
@@ -662,6 +690,7 @@ static void save_png(id<MTLTexture> tex, const char *path) { renderer_save_textu
 
 // MetalFX spatial upscaling (Video tab "Upscaler" = MetalFX). metalfx_upscale() decides (and sets up the scaler for
 // this input / output size); metalfx_encode() runs it and returns the upscaled image.
+#ifndef LARECOMP_VISIONOS
 static id<MTLFXSpatialScaler> g_fx;
 static id<MTLTexture> g_fx_out;
 static NSUInteger g_fx_iw, g_fx_ih, g_fx_ow, g_fx_oh;
@@ -697,6 +726,11 @@ static id<MTLTexture> metalfx_upscale(id<MTLCommandBuffer> cb, id<MTLTexture> in
     }
     return g_fx && g_fx_out ? g_fx_out : nil;
 }
+#else
+static id<MTLTexture> metalfx_upscale(id<MTLCommandBuffer> cb, id<MTLTexture> in, double w, double h) {
+    (void)cb; (void)in; (void)w; (void)h; return nil;
+}
+#endif
 // SMAA 1x (Video tab "Anti-aliasing"; third_party/smaa, MIT; as runtime/nvn/vulkan/shaders.c / exec.c): luma edges ->
 // blending weights -> neighbourhood blending, at the game image's size, before the present / MetalFX. The reference
 // SMAA.hlsl has no Metal mode: it is built through its SMAA_CUSTOM_SL porting macros, with a few textual fixes for
@@ -841,12 +875,16 @@ static id<MTLTexture> smaa_encode(id<MTLCommandBuffer> cb, id<MTLTexture> in) {
 }
 
 static id<MTLTexture> metalfx_encode(id<MTLCommandBuffer> cb, id<MTLTexture> in) {
+#ifndef LARECOMP_VISIONOS
     g_fx.colorTexture = in;
     g_fx.inputContentWidth = in.width;
     g_fx.inputContentHeight = in.height;
     g_fx.outputTexture = g_fx_out;
     [g_fx encodeToCommandBuffer:cb];
     return g_fx_out;
+#else
+    (void)cb; return in;
+#endif
 }
 
 
@@ -1167,11 +1205,13 @@ void *ui_metal_device(void) { return (__bridge void *)dev; }
 int ui_run(void) {
     // The emulated vsync/timer threads need precise sleeps; App Nap timer coalescing
     // otherwise stretches 16ms sleeps to ~100ms whenever the window isn't frontmost.
+#ifndef LARECOMP_VISIONOS
     static id activity;
     if (!activity)
         activity = [[NSProcessInfo processInfo]
             beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical
                               reason:@"Game emulation"];
+#endif
     ui_window_init();
     atomic_store(&ui_ready, true);
     for (;;) {

@@ -114,6 +114,9 @@ This is a beta release. That means bugs are likely, crashes could occur, randomi
 
 ## Building from source
 
+An experimental windowed visionOS target is documented in [visionos/README.md](visionos/README.md).
+Simulator gameplay has been exercised; physical-device validation is still pending.
+
 Every platform needs your own v1.0.0 game files: build first, then use the start screen's game-file setup.
 `make gen` then recompiles the game code from your own game files into `generated/`, and `make` builds it into its own
 library next to the app (`build/lasgame.*`); without it the start screen builds that library itself, as it does for

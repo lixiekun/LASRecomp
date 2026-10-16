@@ -16,7 +16,12 @@ static const char *settings_file(void) {
 }
 
 Settings g_settings = {
+#ifdef LARECOMP_VISIONOS
+    .aspect = ASPECT_ORIGINAL,
+    .res_mode = RES_Q50,
+#else
     .aspect = ASPECT_UNLOCKED,
+#endif
     .fullscreen = false,
     .volume = 1.0f,
     .reverb = true,
@@ -26,7 +31,11 @@ Settings g_settings = {
     .tracker = true,
     .chaos_letters = CHAOS_LETTERS_MAP,
     .diff_damage = 1.0f,
+#ifdef LARECOMP_VISIONOS
+    .upscaler = UPSCALE_BILINEAR,
+#else
     .upscaler = UPSCALE_SHARP,  // (MetalFX on macOS, AMD FSR 1 on Windows)
+#endif
 };
 
 // The game's own text languages: its RomFS carries these per region (regionUS/USen|USes|USfr, regionEU/EUen|EUes|...,

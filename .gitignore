@@ -17,3 +17,9 @@ tools/venv/
 venv/
 __pycache__/
 .DS_Store
+# visionOS: local signing, generated Xcode metadata and downloaded open font
+/visionos/Local.xcconfig
+/visionos/LASVision.xcodeproj/
+/visionos/fonts/*.ttf
+xcuserdata/
+*.xcuserstate
